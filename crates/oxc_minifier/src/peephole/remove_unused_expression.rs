@@ -661,7 +661,7 @@ impl<'a> PeepholeOptimizations {
     ///
     /// Three conditions must hold:
     /// 1. The target is a single-level member expression (`A.foo`, not `a.b.c`)
-    /// 2. ALL references to the symbol have the `MemberWriteTarget` flag
+    /// 2. ALL references to the symbol are member write targets
     /// 3. The symbol creates a fresh value (not an alias to another variable)
     fn is_member_assign_to_unused_binding(
         assign_expr: &AssignmentExpression<'a>,
@@ -680,9 +680,13 @@ impl<'a> PeepholeOptimizations {
         let Some(symbol_id) = ctx.scoping().get_reference(reference_id).symbol_id() else {
             return false;
         };
-        // Check: all references are property-write targets (MemberWriteTarget flag).
-        let mut references = ctx.scoping().get_resolved_references(symbol_id);
-        if !references.all(|r| r.flags().is_member_write_target()) {
+        // Check: all references are member write targets.
+        let scoping = ctx.scoping();
+        let all_member_write = scoping
+            .get_resolved_reference_ids(symbol_id)
+            .iter()
+            .all(|&id| scoping.is_member_write_reference(id));
+        if !all_member_write {
             return false;
         }
         // Check: symbol creates a fresh value (not an alias) and is not exported.
