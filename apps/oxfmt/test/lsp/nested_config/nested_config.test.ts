@@ -70,12 +70,7 @@ describe("LSP nested config", () => {
 
     // sub has singleQuote: false, but explicit config has singleQuote: true
     expect(
-      await formatFixture(
-        FIXTURES_DIR,
-        "nested-config-explicit/sub/test.ts",
-        "typescript",
-        client,
-      ),
+      await formatFixture(FIXTURES_DIR, "nested-config-explicit/sub/test.ts", "typescript", client),
     ).toMatchSnapshot();
   });
 });
