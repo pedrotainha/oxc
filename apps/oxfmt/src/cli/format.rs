@@ -7,7 +7,7 @@ use super::{
     reporter::DefaultReporter,
     result::CliRunResult,
     service::{FormatService, SuccessResult},
-    walk::Walk,
+    walk::{FormatEntry, ScopedWalker, resolve_ignore_paths},
 };
 #[cfg(feature = "napi")]
 use crate::core::JsConfigLoaderCb;
@@ -75,10 +75,7 @@ impl CliRunner {
         };
         let num_of_threads = rayon::current_num_threads();
 
-        // Find and load config file
-        // NOTE: Currently, we only load single config file.
-        // - from `--config` if specified
-        // - else, search nearest config file from cwd upwards
+        // Find and load root config file
         let editorconfig_path = resolve_editorconfig_path(&cwd);
         let mut config_resolver = match ConfigResolver::from_config(
             &cwd,
@@ -126,15 +123,9 @@ impl CliRunner {
             }
         }
 
-        let walker = match Walk::build(
-            &cwd,
-            &paths,
-            &ignore_options.ignore_path,
-            ignore_options.with_node_modules,
-            config_resolver.config_dir(),
-            &ignore_patterns,
-        ) {
-            Ok(walker) => walker,
+        // Resolve ignore paths early to validate before walk starts
+        let resolved_ignore_paths = match resolve_ignore_paths(&cwd, &ignore_options.ignore_path) {
+            Ok(paths) => paths,
             Err(err) => {
                 utils::print_and_flush(
                     stderr,
@@ -144,32 +135,71 @@ impl CliRunner {
             }
         };
 
-        // Get the receiver for streaming entries
-        let rx_entry = walker.stream_entries();
+        // Nested config detection is disabled when --config is explicitly specified
+        let detect_nested = config_options.config.is_none();
+
+        let scoped_walker = ScopedWalker::new(
+            cwd.clone(),
+            &paths,
+            resolved_ignore_paths,
+            ignore_options.with_node_modules,
+            detect_nested,
+            editorconfig_path.clone(),
+            #[cfg(feature = "napi")]
+            self.js_config_loader,
+        );
+
+        // Prepare root targets (resolve paths + build ignore matchers) before walk
+        let root_targets = match scoped_walker
+            .prepare_root_targets(config_resolver.config_dir(), &ignore_patterns)
+        {
+            Ok(targets) => targets,
+            Err(err) => {
+                utils::print_and_flush(
+                    stderr,
+                    &format!("Failed to parse target paths or ignore settings.\n{err}\n"),
+                );
+                return CliRunResult::InvalidOptionConfig;
+            }
+        };
+
+        // Shared channel for format entries from all scopes
+        let (tx_entry, rx_entry) = mpsc::channel::<FormatEntry>();
         // Collect format results (changed paths or unchanged count)
         let (tx_success, rx_success) = mpsc::channel();
         // Diagnostic from formatting service
         let (mut diagnostic_service, tx_error) =
             DiagnosticService::new(Box::new(DefaultReporter::default()));
 
-        if matches!(format_mode, OutputMode::Check) {
-            utils::print_and_flush(stdout, "Checking formatting...\n");
-            utils::print_and_flush(stdout, "\n");
-        }
-
         // Create `SourceFormatter` instance
         let source_formatter = SourceFormatter::new(num_of_threads);
         #[cfg(feature = "napi")]
         let source_formatter = source_formatter.with_external_formatter(self.external_formatter);
 
-        let no_config = config_resolver.config_dir().is_none() && editorconfig_path.is_none();
-
-        // Spawn a thread to run formatting service with streaming entries
+        // Spawn formatting service to consume entries from all scopes
         rayon::spawn(move || {
-            let format_service =
-                FormatService::new(cwd, format_mode, source_formatter, config_resolver);
+            let format_service = FormatService::new(cwd, format_mode, source_formatter);
             format_service.run_streaming(rx_entry, &tx_error, &tx_success);
         });
+
+        if matches!(format_mode, OutputMode::Check) {
+            utils::print_and_flush(stdout, "Checking formatting...\n");
+            utils::print_and_flush(stdout, "\n");
+        }
+
+        // Run scoped walks (root + nested) — sends entries to tx_entry
+        let any_config_found = match scoped_walker.run(config_resolver, root_targets, &tx_entry) {
+            Ok(found) => found,
+            Err(err) => {
+                drop(tx_entry);
+                utils::print_and_flush(stderr, &format!("Failed to parse configuration.\n{err}\n"));
+                return CliRunResult::InvalidOptionConfig;
+            }
+        };
+        // Drop sender so the formatting service knows no more entries are coming
+        drop(tx_entry);
+
+        let no_config = !any_config_found && editorconfig_path.is_none();
 
         // Collect results and separate changed paths from unchanged count
         let mut changed_paths: Vec<String> = vec![];
