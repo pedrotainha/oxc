@@ -649,6 +649,9 @@ impl<'a> PeepholeOptimizations {
     /// Checks side-effect analysis (respects `property_write_side_effects`) and
     /// verifies the root object is an unused local binding.
     fn remove_unused_member_assignment(e: &Expression<'a>, ctx: &TraverseCtx<'a>) -> bool {
+        if Self::keep_top_level_var_in_script_mode(ctx) {
+            return false;
+        }
         if e.may_have_side_effects(ctx) {
             return false;
         }
@@ -685,7 +688,7 @@ impl<'a> PeepholeOptimizations {
         let all_member_write = scoping
             .get_resolved_reference_ids(symbol_id)
             .iter()
-            .all(|&id| scoping.is_member_write_reference(id));
+            .all(|&id| scoping.get_reference(id).flags().is_member_write_target());
         if !all_member_write {
             return false;
         }
