@@ -534,6 +534,16 @@ fn test_property_write_side_effects() {
         "const a = {}, b = a; b.add = 1; export { a };",
         &options,
     );
+    test_options(
+        "const a = {}; const b = a; b.add = 1; export { b };",
+        "const b = {}; b.add = 1; export { b };",
+        &options,
+    );
+    test_options(
+        "const a = {}; const b = a; a.add = 1; export { b };",
+        "const a = {}, b = a; a.add = 1; export { b };",
+        &options,
+    );
 
     // Chained member expression: b.a.add = 1 must be preserved
     // because b.a could alias exported a
@@ -545,6 +555,64 @@ fn test_property_write_side_effects() {
 
     // Exported function: property write must be preserved (observable by importers)
     test_same_options("export function A() {} A.foo = 1;", &options);
+
+    // Classes with static setters should NOT be dropped — setters trigger side effects
+    test_same_options("class A { static set foo(v) { console.log(v); } } A.foo = 1;", &options);
+
+    // Object literals with setters should NOT be dropped
+    test_same_options("const obj = { set foo(v) { console.log(v); } }; obj.foo = 1;", &options);
+
+    // Class expression with static setter should NOT be dropped
+    test_same_options(
+        "const A = class { static set foo(v) { console.log(v); } }; A.foo = 1;",
+        &options,
+    );
+
+    // Static accessor auto-generates setter — must NOT be dropped
+    test_same_options("class A { static accessor foo = 0; } A.foo = 1;", &options);
+
+    // Any static property with a value prevents removal (matches SWC behavior)
+    test_same_options("class A { static b = 0; } A.b = 1;", &options);
+
+    // Static property whose value contains a setter — must NOT be dropped
+    test_same_options(
+        "class A { static b = { set x(v) { console.log(v); } }; } A.b = 1;",
+        &options,
+    );
+
+    // Object literal with nested setter in property value
+    test_same_options(
+        "const obj = { bar: { set x(v) { console.log(v); } } }; obj.bar = 1;",
+        &options,
+    );
+
+    // Inherited static setter via extends — B.foo triggers A's static setter
+    // We can't statically detect inherited setters, but B extends A means
+    // B has a read reference to A, so A is preserved. B itself is fresh
+    // (no own static setters), but the extends clause is a side effect.
+    test_same_options(
+        "class A { static set foo(v) { console.log(v); } } class B extends A {} B.foo = 1;",
+        &options,
+    );
+
+    // Object.defineProperty installs setter dynamically — foo has a read reference
+    // in the first argument, so foo is not considered unused
+    test_options(
+        "const foo = () => {}; Object.defineProperty(foo, 'bar', { set: (v) => { console.log(v); } }); foo.bar = 1;",
+        "const foo = () => {}; Object.defineProperty(foo, 'bar', { set: (v) => { console.log(v); } }), foo.bar = 1;",
+        &options,
+    );
+    test_options(
+        "const foo = []; Object.defineProperty(foo, 'bar', { set: (v) => { console.log(v); } }); foo.bar = 1;",
+        "const foo = []; Object.defineProperty(foo, 'bar', { set: (v) => { console.log(v); } }), foo.bar = 1;",
+        &options,
+    );
+
+    // Non-static setters are fine — property writes on the class itself won't trigger them
+    test_options("class A { set foo(v) { console.log(v); } } A.bar = 1;", "", &options);
+
+    // Static getter (not setter) is fine to drop
+    test_options("class A { static get foo() { return 1; } } A.bar = 1;", "", &options);
 
     // Default options (property_write_side_effects: true) should NOT drop these
     let default_opts =

@@ -22,27 +22,92 @@ impl<'a> PeepholeOptimizations {
         ctx.init_value(symbol_id, value, is_fresh_value);
     }
 
-    /// Check if an expression creates a fresh value that cannot alias another binding.
+    /// Check if an expression creates a fresh value that cannot alias another binding
+    /// and has no setters/getters that could trigger side effects on property writes.
     fn is_fresh_value_expression(expr: &Expression<'a>) -> bool {
-        matches!(
-            expr,
-            Expression::ObjectExpression(_)
-                | Expression::ArrayExpression(_)
-                | Expression::ArrowFunctionExpression(_)
-                | Expression::FunctionExpression(_)
-                | Expression::ClassExpression(_)
-        )
+        match expr {
+            Expression::ArrayExpression(_)
+            | Expression::ArrowFunctionExpression(_)
+            | Expression::FunctionExpression(_) => true,
+            Expression::ObjectExpression(obj) => {
+                // Object literals with setter/getter properties are not safe to treat as fresh.
+                // Setters trigger side effects on property writes.
+                // Getter-only properties throw TypeError in strict mode on write.
+                // Also check property values for nested setters/getters.
+                !obj.properties.iter().any(|prop| {
+                    matches!(
+                        prop,
+                        ObjectPropertyKind::ObjectProperty(p)
+                            if matches!(p.kind, PropertyKind::Set | PropertyKind::Get)
+                                || Self::expression_has_setter_or_getter(&p.value)
+                    )
+                })
+            }
+            Expression::ClassExpression(class) => !Self::class_has_static_setter(class),
+            _ => false,
+        }
     }
 
-    /// Initialize symbol value for function or class declarations.
-    /// These always create fresh values (cannot alias another binding).
-    pub fn init_declaration_symbol_value(
+    /// Check if a class has any static setters, static accessor properties,
+    /// or static property definitions with values.
+    /// Following SWC's approach: any class with static property definitions
+    /// is not considered fresh, because the static initializer runs during
+    /// class creation and defines the property via `[[DefineOwnProperty]]`.
+    fn class_has_static_setter(class: &Class<'a>) -> bool {
+        // Classes with `extends` may inherit static setters from the parent.
+        // We can't statically determine the parent's static setters,
+        // so conservatively mark as non-fresh.
+        if class.super_class.is_some() {
+            return true;
+        }
+        class.body.body.iter().any(|element| match element {
+            ClassElement::MethodDefinition(method) => {
+                method.r#static && method.kind == MethodDefinitionKind::Set
+            }
+            // `static accessor foo` auto-generates a getter+setter pair
+            ClassElement::AccessorProperty(prop) => prop.r#static,
+            // Any static property definition with a value prevents fresh marking.
+            // The value is evaluated during class creation and could interact with
+            // property writes in unexpected ways (e.g. nested setters, proxies).
+            ClassElement::PropertyDefinition(prop) => prop.r#static && prop.value.is_some(),
+            _ => false,
+        })
+    }
+
+    /// Check if an expression contains setter or getter definitions.
+    fn expression_has_setter_or_getter(expr: &Expression<'a>) -> bool {
+        match expr {
+            Expression::ObjectExpression(obj) => obj.properties.iter().any(|prop| {
+                matches!(
+                    prop,
+                    ObjectPropertyKind::ObjectProperty(p)
+                        if matches!(p.kind, PropertyKind::Set | PropertyKind::Get)
+                )
+            }),
+            Expression::ClassExpression(class) => Self::class_has_static_setter(class),
+            _ => false,
+        }
+    }
+
+    /// Initialize symbol value for function declarations.
+    /// Function declarations always create fresh values (cannot alias another binding).
+    pub fn init_function_declaration_symbol_value(
         id: Option<&BindingIdentifier<'a>>,
         ctx: &mut TraverseCtx<'a>,
     ) {
         let Some(id) = id else { return };
         let Some(symbol_id) = id.symbol_id.get() else { return };
         ctx.init_value(symbol_id, None, true);
+    }
+
+    /// Initialize symbol value for class declarations.
+    /// Class declarations create fresh values, but classes with static setters
+    /// are not considered fresh because property writes trigger setter side effects.
+    pub fn init_class_declaration_symbol_value(class: &Class<'a>, ctx: &mut TraverseCtx<'a>) {
+        let Some(id) = &class.id else { return };
+        let Some(symbol_id) = id.symbol_id.get() else { return };
+        let is_fresh = !Self::class_has_static_setter(class);
+        ctx.init_value(symbol_id, None, is_fresh);
     }
 
     fn is_for_statement_init(ctx: &TraverseCtx<'a>) -> bool {
