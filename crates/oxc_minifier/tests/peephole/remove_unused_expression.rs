@@ -586,6 +586,12 @@ fn test_property_write_side_effects() {
         &options,
     );
 
+    // Deeply nested setter in property value (depth 2+)
+    test_same_options(
+        "const obj = { bar: { baz: { set x(v) { console.log(v); } } } }; obj.bar = 1;",
+        &options,
+    );
+
     // Inherited static setter via extends — B.foo triggers A's static setter
     // We can't statically detect inherited setters, but B extends A means
     // B has a read reference to A, so A is preserved. B itself is fresh

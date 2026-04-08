@@ -43,17 +43,20 @@ impl<'a> PeepholeOptimizations {
                     )
                 })
             }
-            Expression::ClassExpression(class) => !Self::class_has_static_setter(class),
+            Expression::ClassExpression(class) => {
+                !Self::class_may_have_property_side_effects(class)
+            }
             _ => false,
         }
     }
 
-    /// Check if a class has any static setters, static accessor properties,
-    /// or static property definitions with values.
+    /// Check if a class may have side effects on property writes.
+    /// Returns `true` if the class has static setters, static accessor properties,
+    /// static property definitions with values, or an `extends` clause.
     /// Following SWC's approach: any class with static property definitions
     /// is not considered fresh, because the static initializer runs during
     /// class creation and defines the property via `[[DefineOwnProperty]]`.
-    fn class_has_static_setter(class: &Class<'a>) -> bool {
+    fn class_may_have_property_side_effects(class: &Class<'a>) -> bool {
         // Classes with `extends` may inherit static setters from the parent.
         // We can't statically determine the parent's static setters,
         // so conservatively mark as non-fresh.
@@ -74,7 +77,7 @@ impl<'a> PeepholeOptimizations {
         })
     }
 
-    /// Check if an expression contains setter or getter definitions.
+    /// Check if an expression contains setter or getter definitions (recursively).
     fn expression_has_setter_or_getter(expr: &Expression<'a>) -> bool {
         match expr {
             Expression::ObjectExpression(obj) => obj.properties.iter().any(|prop| {
@@ -82,9 +85,10 @@ impl<'a> PeepholeOptimizations {
                     prop,
                     ObjectPropertyKind::ObjectProperty(p)
                         if matches!(p.kind, PropertyKind::Set | PropertyKind::Get)
+                            || Self::expression_has_setter_or_getter(&p.value)
                 )
             }),
-            Expression::ClassExpression(class) => Self::class_has_static_setter(class),
+            Expression::ClassExpression(class) => Self::class_may_have_property_side_effects(class),
             _ => false,
         }
     }
@@ -106,7 +110,7 @@ impl<'a> PeepholeOptimizations {
     pub fn init_class_declaration_symbol_value(class: &Class<'a>, ctx: &mut TraverseCtx<'a>) {
         let Some(id) = &class.id else { return };
         let Some(symbol_id) = id.symbol_id.get() else { return };
-        let is_fresh = !Self::class_has_static_setter(class);
+        let is_fresh = !Self::class_may_have_property_side_effects(class);
         ctx.init_value(symbol_id, None, is_fresh);
     }
 
