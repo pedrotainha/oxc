@@ -1,4 +1,3 @@
-#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -20,27 +19,23 @@ pub struct LSPFileSystem {
 /// VS Code as an example likes to send mixed URI styles within the same connection:
 /// - workspace: `file:///c:/Path/To/file.js`
 /// - lint/format: `file:///C:/path/to/file.js`
-#[cfg(test)]
-struct ResolvedPath(PathBuf);
+pub struct ResolvedPath(PathBuf);
 
-#[cfg(test)]
 impl From<PathBuf> for ResolvedPath {
     fn from(path: PathBuf) -> Self {
         Self::canonical(path)
     }
 }
 
-#[cfg(test)]
-impl TryFrom<Uri> for ResolvedPath {
+impl TryFrom<&Uri> for ResolvedPath {
     type Error = String;
 
-    fn try_from(uri: Uri) -> Result<Self, Self::Error> {
+    fn try_from(uri: &Uri) -> Result<Self, Self::Error> {
         let path = uri.to_file_path().ok_or_else(|| "Invalid URI".to_string())?;
         Ok(Self::canonical(path.to_path_buf()))
     }
 }
 
-#[cfg(test)]
 impl ResolvedPath {
     pub fn as_path(&self) -> &PathBuf {
         &self.0
@@ -136,8 +131,8 @@ mod tests {
         let uri = Uri::from_file_path(&file).unwrap();
         let unresolved_uri = Uri::from_file_path(dir.join("Test.txt")).unwrap();
 
-        let resolved_path = ResolvedPath::try_from(uri).unwrap();
-        let unresolved_path = ResolvedPath::try_from(unresolved_uri).unwrap();
+        let resolved_path = ResolvedPath::try_from(&uri).unwrap();
+        let unresolved_path = ResolvedPath::try_from(&unresolved_uri).unwrap();
 
         assert_eq!(*resolved_path.as_path(), file);
 
@@ -161,8 +156,8 @@ mod tests {
         let uri = Uri::from_file_path(&dir).unwrap();
         let unresolved_uri = Uri::from_file_path(&unresolved_dir).unwrap();
 
-        let resolved_path = ResolvedPath::try_from(uri).unwrap();
-        let unresolved_path = ResolvedPath::try_from(unresolved_uri).unwrap();
+        let resolved_path = ResolvedPath::try_from(&uri).unwrap();
+        let unresolved_path = ResolvedPath::try_from(&unresolved_uri).unwrap();
 
         assert_eq!(*resolved_path.as_path(), dir);
 
