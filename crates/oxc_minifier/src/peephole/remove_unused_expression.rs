@@ -665,7 +665,7 @@ impl<'a> PeepholeOptimizations {
     /// Three conditions must hold:
     /// 1. The target is a single-level member expression (`A.foo`, not `a.b.c`)
     /// 2. ALL references to the symbol are member write targets
-    /// 3. The symbol creates a fresh value (not an alias to another variable)
+    /// 3. The symbol creates a fresh value (not an alias) and is not exported
     fn is_member_assign_to_unused_binding(
         assign_expr: &AssignmentExpression<'a>,
         ctx: &TraverseCtx<'a>,
@@ -683,20 +683,19 @@ impl<'a> PeepholeOptimizations {
         let Some(symbol_id) = ctx.scoping().get_reference(reference_id).symbol_id() else {
             return false;
         };
-        // Check: all references are member write targets.
-        let scoping = ctx.scoping();
-        let all_member_write = scoping
-            .get_resolved_reference_ids(symbol_id)
-            .iter()
-            .all(|&id| scoping.get_reference(id).flags().is_member_write_target());
-        if !all_member_write {
-            return false;
-        }
         // Check: symbol creates a fresh value (not an alias) and is not exported.
         let Some(sv) = ctx.state.symbol_values.get_symbol_value(symbol_id) else {
             return false;
         };
-        sv.is_fresh_value && !sv.exported
+        if !sv.is_fresh_value || sv.exported {
+            return false;
+        }
+        // Check: all references are member write targets.
+        let scoping = ctx.scoping();
+        scoping
+            .get_resolved_reference_ids(symbol_id)
+            .iter()
+            .all(|&id| scoping.get_reference(id).flags().is_member_write_target())
     }
 
     fn remove_unused_class_expr(e: &mut Expression<'a>, ctx: &mut TraverseCtx<'a>) -> bool {

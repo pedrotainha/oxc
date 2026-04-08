@@ -516,6 +516,15 @@ fn test_property_write_side_effects() {
     // Object literal + property assignment (fresh value, safe to drop)
     test_options("const B = {}; B.foo = 1;", "", &options);
 
+    // Arrow function + property assignment (fresh value, safe to drop)
+    test_options("const C = () => {}; C.foo = 1;", "", &options);
+
+    // Function expression + property assignment (fresh value, safe to drop)
+    test_options("const D = function() {}; D.foo = 1;", "", &options);
+
+    // Variable initialized from another binding (not fresh, could alias)
+    test_same_options("const b = a; b.foo = 1;", &options);
+
     // Alias where nothing is exported: inlining resolves alias, then everything drops
     test_options("const a = {}; const b = a; b.foo = 1;", "", &options);
 

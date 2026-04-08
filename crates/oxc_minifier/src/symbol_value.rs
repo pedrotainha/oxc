@@ -15,8 +15,9 @@ pub struct SymbolValue<'a> {
     pub read_references_count: u32,
     pub write_references_count: u32,
 
-    /// Whether the variable's initializer creates a fresh value that cannot alias
-    /// another binding. True for object/array/function/class literals.
+    /// Whether the symbol's value is guaranteed fresh (cannot alias another binding).
+    /// True for function/class declarations and variable declarations initialized
+    /// with object/array/function/class literals.
     pub is_fresh_value: bool,
 
     pub scope_id: ScopeId,
