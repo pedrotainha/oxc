@@ -648,7 +648,10 @@ impl<'a> PeepholeOptimizations {
     /// Try to remove a member expression assignment (e.g. `A.from = () => {}`).
     /// Checks side-effect analysis (respects `property_write_side_effects`) and
     /// verifies the root object is an unused local binding.
-    fn remove_unused_member_assignment(e: &Expression<'a>, ctx: &TraverseCtx<'a>) -> bool {
+    fn remove_unused_member_assignment(
+        e: &Expression<'a>,
+        ctx: &mut TraverseCtx<'a>,
+    ) -> bool {
         if Self::keep_top_level_var_in_script_mode(ctx) {
             return false;
         }
@@ -666,10 +669,19 @@ impl<'a> PeepholeOptimizations {
     /// 1. The target is a single-level member expression (`A.foo`, not `a.b.c`)
     /// 2. ALL references to the symbol are member write targets
     /// 3. The symbol creates a fresh value (not an alias) and is not exported
+    /// 4. The symbol has no `__proto__` member writes (which could install setters)
     fn is_member_assign_to_unused_binding(
         assign_expr: &AssignmentExpression<'a>,
-        ctx: &TraverseCtx<'a>,
+        ctx: &mut TraverseCtx<'a>,
     ) -> bool {
+        // Check if the current assignment writes to `__proto__`.
+        // `__proto__` writes change the prototype chain and can install setters
+        // that make subsequent property writes side-effectful.
+        let is_proto_write = matches!(
+            &assign_expr.left,
+            AssignmentTarget::StaticMemberExpression(e) if e.property.name == "__proto__"
+        );
+
         // Only handle single-level member expressions (A.foo, not a.b.c).
         // Chained access like `b.a.foo = 1` may write through aliased properties.
         let object: &Expression<'a> = match &assign_expr.left {
@@ -683,6 +695,25 @@ impl<'a> PeepholeOptimizations {
         let Some(symbol_id) = ctx.scoping().get_reference(reference_id).symbol_id() else {
             return false;
         };
+
+        // Mark symbols with `__proto__` writes so subsequent property writes
+        // to the same symbol are preserved (the setter may trigger).
+        // Only mark if there are other member writes — if __proto__ is the only
+        // reference, the setter is installed but never triggered, so dropping is safe.
+        if is_proto_write {
+            let ref_count = ctx.scoping().get_resolved_reference_ids(symbol_id).len();
+            if ref_count > 1 {
+                ctx.state.proto_write_symbols.insert(symbol_id);
+                return false;
+            }
+            // Fall through to normal checks — __proto__ alone can be dropped.
+        }
+        // If this symbol has `__proto__` writes, don't drop any property writes
+        // — the `__proto__` assignment may have installed setters.
+        if ctx.state.proto_write_symbols.contains(&symbol_id) {
+            return false;
+        }
+
         // Check: symbol creates a fresh value (not an alias) and is not exported.
         let Some(sv) = ctx.state.symbol_values.get_symbol_value(symbol_id) else {
             return false;

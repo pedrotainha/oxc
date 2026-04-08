@@ -125,6 +125,7 @@ impl<'a> PeepholeOptimizations {
 impl<'a> Traverse<'a> for PeepholeOptimizations {
     fn enter_program(&mut self, _program: &mut Program<'a>, ctx: &mut TraverseCtx<'a>) {
         ctx.state.symbol_values.clear();
+        ctx.state.proto_write_symbols.clear();
         ctx.state.changed = false;
     }
 

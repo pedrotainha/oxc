@@ -614,30 +614,27 @@ fn test_property_write_side_effects() {
     // Static getter (not setter) is fine to drop
     test_options("class A { static get foo() { return 1; } } A.bar = 1;", "", &options);
 
-    // __proto__ assignment installs a setter dynamically.
-    // When the binding is completely unused, dropping everything is safe because
-    // the setter never gets installed, so a.a = 1 never triggers console.log.
+    // __proto__ assignment can install setters that make subsequent property writes
+    // side-effectful. When both __proto__ write and property write exist, preserve all.
     test_options(
         "const a = {}; a.__proto__ = { set a(v) { console.log('setter'); } }; a.a = 1;",
-        "",
+        "const a = {}; a.__proto__ = { set a(v) { console.log('setter'); } }, a.a = 1;",
         &options,
     );
     test_options(
         "class A {} A.__proto__ = { set a(v) { console.log('setter'); } }; A.a = 1;",
+        "class A {} A.__proto__ = { set a(v) { console.log('setter'); } }, A.a = 1;",
+        &options,
+    );
+    // __proto__ write alone (no subsequent property write) — safe to drop,
+    // the setter is installed but never triggered.
+    test_options(
+        "const a = {}; a.__proto__ = { set a(v) { console.log('setter'); } };",
         "",
         &options,
     );
-    // But when exported, the __proto__ write and property write must be preserved.
-    test_options(
-        "const a = {}; a.__proto__ = { set a(v) { console.log('setter'); } }; a.a = 1; export { a };",
-        "const a = {}; a.__proto__ = { set a(v) { console.log('setter'); } }, a.a = 1; export { a };",
-        &options,
-    );
-    test_options(
-        "class A {} A.__proto__ = { set a(v) { console.log('setter'); } }; A.a = 1; export { A };",
-        "class A {} A.__proto__ = { set a(v) { console.log('setter'); } }, A.a = 1; export { A };",
-        &options,
-    );
+    // Property write alone (no __proto__) — safe to drop, no setter exists.
+    test_options("const a = {}; a.a = 1;", "", &options);
 
     // Default options (property_write_side_effects: true) should NOT drop these
     let default_opts =
