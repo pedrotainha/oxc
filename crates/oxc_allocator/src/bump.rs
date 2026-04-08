@@ -13,6 +13,8 @@
     clippy::inline_always,
     clippy::manual_div_ceil,
     clippy::map_unwrap_or,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
     clippy::mut_from_ref,
     clippy::needless_lifetimes,
     clippy::ptr_as_ptr,
@@ -437,7 +439,7 @@ fn is_pointer_aligned_to<T>(pointer: *mut T, align: usize) -> bool {
 }
 
 #[inline]
-pub const fn round_up_to(n: usize, divisor: usize) -> Option<usize> {
+pub(crate) const fn round_up_to(n: usize, divisor: usize) -> Option<usize> {
     debug_assert!(divisor > 0);
     debug_assert!(divisor.is_power_of_two());
     match n.checked_add(divisor - 1) {
@@ -449,7 +451,7 @@ pub const fn round_up_to(n: usize, divisor: usize) -> Option<usize> {
 /// Like `round_up_to` but turns overflow into undefined behavior rather than
 /// returning `None`.
 #[inline]
-pub unsafe fn round_up_to_unchecked(n: usize, divisor: usize) -> usize {
+pub(crate) unsafe fn round_up_to_unchecked(n: usize, divisor: usize) -> usize {
     match round_up_to(n, divisor) {
         Some(x) => x,
         None => {
@@ -460,7 +462,7 @@ pub unsafe fn round_up_to_unchecked(n: usize, divisor: usize) -> usize {
 }
 
 #[inline]
-pub fn round_down_to(n: usize, divisor: usize) -> usize {
+pub(crate) fn round_down_to(n: usize, divisor: usize) -> usize {
     debug_assert!(divisor > 0);
     debug_assert!(divisor.is_power_of_two());
     n & !(divisor - 1)
@@ -468,14 +470,14 @@ pub fn round_down_to(n: usize, divisor: usize) -> usize {
 
 /// Same as `round_down_to` but preserves pointer provenance.
 #[inline]
-pub fn round_mut_ptr_down_to(ptr: *mut u8, divisor: usize) -> *mut u8 {
+pub(crate) fn round_mut_ptr_down_to(ptr: *mut u8, divisor: usize) -> *mut u8 {
     debug_assert!(divisor > 0);
     debug_assert!(divisor.is_power_of_two());
     ptr.wrapping_sub(ptr as usize & (divisor - 1))
 }
 
 #[inline]
-pub unsafe fn round_mut_ptr_up_to_unchecked(ptr: *mut u8, divisor: usize) -> *mut u8 {
+pub(crate) unsafe fn round_mut_ptr_up_to_unchecked(ptr: *mut u8, divisor: usize) -> *mut u8 {
     debug_assert!(divisor > 0);
     debug_assert!(divisor.is_power_of_two());
     let aligned = round_up_to_unchecked(ptr as usize, divisor);
