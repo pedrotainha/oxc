@@ -671,20 +671,16 @@ impl<'a> PeepholeOptimizations {
         assign_expr: &AssignmentExpression<'a>,
         ctx: &mut TraverseCtx<'a>,
     ) -> bool {
-        // Check if the current assignment writes to `__proto__`.
-        // `__proto__` writes change the prototype chain and can install setters
-        // that make subsequent property writes side-effectful.
-        let is_proto_write = matches!(
-            &assign_expr.left,
-            AssignmentTarget::StaticMemberExpression(e) if e.property.name == "__proto__"
-        );
-
         // Only handle single-level member expressions (A.foo, not a.b.c).
         // Chained access like `b.a.foo = 1` may write through aliased properties.
-        let object: &Expression<'a> = match &assign_expr.left {
-            AssignmentTarget::StaticMemberExpression(e) => &e.object,
-            AssignmentTarget::ComputedMemberExpression(e) => &e.object,
-            AssignmentTarget::PrivateFieldExpression(e) => &e.object,
+        // Also detect `__proto__` writes which change the prototype chain and can
+        // install setters that make subsequent property writes side-effectful.
+        let (object, is_proto_write): (&Expression<'a>, bool) = match &assign_expr.left {
+            AssignmentTarget::StaticMemberExpression(e) => {
+                (&e.object, e.property.name == "__proto__")
+            }
+            AssignmentTarget::ComputedMemberExpression(e) => (&e.object, false),
+            AssignmentTarget::PrivateFieldExpression(e) => (&e.object, false),
             _ => return false,
         };
         let Expression::Identifier(ident) = object else { return false };
